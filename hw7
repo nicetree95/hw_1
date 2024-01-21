@@ -1,0 +1,87 @@
+# 1.1
+
+
+DO $$ 
+DECLARE 
+    CalculationDate DATE := CURRENT_DATE; 
+BEGIN
+    -- Обновление существующей записи в таргете, если значения отсутствуют в дату обновления
+    UPDATE Target
+    SET
+        end_dt = CalculationDate - INTERVAL '1 day',
+        ctl_action = 'D',
+        ctl_datechange = CalculationDate
+    WHERE
+        id IN (SELECT id FROM Source WHERE gregor_dt = CalculationDate)
+        AND NOT EXISTS (
+            SELECT 1
+            FROM Source s
+            WHERE s.gregor_dt = CalculationDate
+                AND s.id = Target.id
+        );
+
+    -- Обновление существующей записи в таргете, если произошло изменение атрибутов
+    UPDATE Target
+    SET
+        end_dt = CalculationDate - INTERVAL '1 day',
+        ctl_action = 'U',
+        ctl_datechange = CalculationDate
+    WHERE
+        id IN (SELECT id FROM Source WHERE gregor_dt = CalculationDate)
+        AND EXISTS (
+            SELECT 1
+            FROM Source s
+            WHERE s.gregor_dt = CalculationDate
+                AND s.id = Target.id
+                AND (s.attr1 <> Target.attr1 OR s.attr2 <> Target.attr2)
+        );
+
+    -- Добавление записей с I статусом
+    INSERT INTO Target (id, attr1, attr2, start_dt, end_dt, ctl_action, ctl_datechange)
+    SELECT
+        s.id,
+        s.attr1,
+        s.attr2,
+        CalculationDate AS start_dt,
+        '9999-12-31'::DATE AS end_dt,
+        'I' AS ctl_action,
+        CalculationDate AS ctl_datechange
+    FROM
+        Source s
+    WHERE
+        s.gregor_dt = CalculationDate
+        AND NOT EXISTS (
+            SELECT 1
+            FROM Target t
+            WHERE t.id = s.id
+                AND t.end_dt = '9999-12-31'::DATE
+        );
+END $$;
+
+#1.2 не уверена, что подразумевалось что-то такое, и что оконка сильно лучге сравнения с датой
+
+WITH RankedTarget AS (
+    SELECT
+        id,
+        attr1,
+        attr2,
+        start_dt,
+        end_dt,
+        ctl_action,
+        ctl_datechange,
+        ROW_NUMBER() OVER (PARTITION BY id ORDER BY ctl_datechange DESC) AS RowNum
+    FROM
+        Target
+)
+SELECT
+    id,
+    attr1,
+    attr2,
+    start_dt,
+    end_dt,
+    ctl_action,
+    ctl_datechange
+FROM
+    RankedTarget
+WHERE
+    RowNum = 1;
